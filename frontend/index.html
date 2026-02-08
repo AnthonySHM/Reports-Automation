@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SHM Report Generator</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg:#f5f7fa;--surface:#fff;--border:#e1e5eb;
+    --text:#1a1a2e;--text-muted:#6b7280;
+    --primary:#2563eb;--primary-hover:#1d4ed8;--primary-disabled:#93b4f5;
+    --success:#059669;--success-bg:#ecfdf5;--success-border:#a7f3d0;
+    --error:#dc2626;--error-bg:#fef2f2;--error-border:#fecaca;
+    --radius:8px;
+  }
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:var(--bg);color:var(--text);
+    min-height:100vh;display:flex;align-items:center;justify-content:center;
+    padding:24px;
+  }
+  .card{
+    background:var(--surface);border:1px solid var(--border);
+    border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);
+    width:100%;max-width:520px;padding:32px;
+  }
+  h1{font-size:1.35rem;font-weight:600;margin-bottom:4px}
+  .subtitle{color:var(--text-muted);font-size:.875rem;margin-bottom:28px}
+
+  /* Status indicator */
+  .status-row{
+    display:flex;align-items:center;gap:8px;
+    font-size:.8rem;color:var(--text-muted);margin-bottom:20px;
+  }
+  .dot{width:8px;height:8px;border-radius:50%;background:#d1d5db;flex-shrink:0}
+  .dot.ok{background:var(--success)}
+  .dot.err{background:var(--error)}
+
+  /* Form */
+  label{display:block;font-size:.8rem;font-weight:500;margin-bottom:6px;color:var(--text-muted)}
+  select,input[type=text],input[type=date]{
+    width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);
+    font-size:.9rem;color:var(--text);background:var(--surface);
+    outline:none;transition:border-color .15s;
+  }
+  select:focus,input:focus{border-color:var(--primary)}
+  .field{margin-bottom:16px}
+  .date-row{display:flex;gap:12px}
+  .date-row .field{flex:1}
+
+  /* Buttons */
+  .btn-row{display:flex;gap:10px;margin-top:24px}
+  button{
+    flex:1;padding:11px 18px;border:none;border-radius:var(--radius);
+    font-size:.9rem;font-weight:500;cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center;gap:8px;
+    transition:background .15s,opacity .15s;
+  }
+  .btn-primary{background:var(--primary);color:#fff}
+  .btn-primary:hover:not(:disabled){background:var(--primary-hover)}
+  .btn-primary:disabled{background:var(--primary-disabled);cursor:not-allowed}
+  .btn-download{background:#f0fdf4;color:var(--success);border:1px solid var(--success-border)}
+  .btn-download:hover:not(:disabled){background:#dcfce7}
+  .btn-download:disabled{opacity:.45;cursor:not-allowed}
+
+  /* Spinner */
+  .spinner{
+    width:16px;height:16px;border:2px solid rgba(255,255,255,.35);
+    border-top-color:#fff;border-radius:50%;
+    animation:spin .6s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* Messages */
+  .msg{
+    margin-top:16px;padding:10px 14px;border-radius:var(--radius);
+    font-size:.85rem;line-height:1.45;display:none;
+  }
+  .msg.success{display:block;background:var(--success-bg);border:1px solid var(--success-border);color:var(--success)}
+  .msg.error{display:block;background:var(--error-bg);border:1px solid var(--error-border);color:var(--error)}
+
+  /* Summary */
+  .summary{
+    margin-top:12px;font-size:.8rem;color:var(--text-muted);
+    display:none;
+  }
+  .summary.show{display:block}
+  .summary span{font-weight:600}
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h1>SHM Report Generator</h1>
+  <p class="subtitle">Generate and download PowerPoint reports</p>
+
+  <div class="status-row">
+    <span class="dot" id="healthDot"></span>
+    <span id="healthText">Checking backend...</span>
+  </div>
+
+  <div class="field">
+    <label for="clientName">Client Name</label>
+    <select id="clientName" required>
+      <option value="" disabled selected>Select client…</option>
+      <option value="montereymech">Monterey Mechanical - WT</option>
+      <option value="elephant">Elephant - 1st of the month</option>
+      <option value="cic_xerox">CIC - X (but X is not providing IT)</option>
+      <option value="wiegmann">Wiegmann - WT</option>
+      <option value="saints">The Saints Joachim and Anne - WT</option>
+      <option value="rdlr">RDLR - direct</option>
+      <option value="jorgensen_labs">Jorgensen Labs - X</option>
+      <option value="gatedrentals">Gated Rentals - direct</option>
+      <option value="cjfig">CJFIG - direct</option>
+      <option value="packard">Packard - direct (you got IT)</option>
+    </select>
+  </div>
+
+  <div class="date-row">
+    <div class="field">
+      <label for="startDate">Period Start</label>
+      <input type="date" id="startDate" onchange="onStartChanged()">
+    </div>
+    <div class="field">
+      <label for="endDate">Period End</label>
+      <input type="date" id="endDate" onchange="onEndChanged()">
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn-primary" id="btnGenerate" onclick="generate()">
+      Generate Report
+    </button>
+    <button class="btn-download" id="btnDownload" disabled onclick="download()">
+      Download PPTX
+    </button>
+  </div>
+
+  <div class="msg" id="msg"></div>
+  <div class="summary" id="summary"></div>
+</div>
+
+<script>
+const API = "";
+
+let currentReportId = null;
+
+// --- Helpers ---------------------------------------------------------------
+function formatDate(isoStr) {
+  // "2026-01-22" → "22 January 2026"
+  if (!isoStr) return "";
+  const d = new Date(isoStr + "T00:00:00");
+  return d.toLocaleDateString("en-GB", {
+    day: "numeric", month: "long", year: "numeric"
+  });
+}
+
+// --- Date order enforcement ------------------------------------------------
+function onStartChanged() {
+  const startEl = document.getElementById("startDate");
+  const endEl   = document.getElementById("endDate");
+  // Set min on end so the calendar greys out anything before start
+  endEl.min = startEl.value;
+  // If end is already set and now invalid, clear it
+  if (endEl.value && endEl.value <= startEl.value) {
+    endEl.value = "";
+  }
+}
+
+function onEndChanged() {
+  const startEl = document.getElementById("startDate");
+  const endEl   = document.getElementById("endDate");
+  // Start max = earlier of yesterday and the selected end date
+  const today = new Date();
+  today.setDate(today.getDate() - 1);
+  const yesterday = today.toISOString().split("T")[0];
+  startEl.max = endEl.value && endEl.value < yesterday ? endEl.value : yesterday;
+  // If start is already set and now invalid, clear it
+  if (startEl.value && startEl.value >= endEl.value) {
+    startEl.value = "";
+  }
+}
+
+// --- Health check ----------------------------------------------------------
+async function checkHealth() {
+  const dot  = document.getElementById("healthDot");
+  const text = document.getElementById("healthText");
+  try {
+    const r = await fetch(API + "/api/v1/health");
+    const d = await r.json();
+    dot.className  = "dot ok";
+    text.textContent = "Backend connected \u2014 " + d.engine;
+  } catch {
+    dot.className  = "dot err";
+    text.textContent = "Backend unreachable";
+  }
+}
+checkHealth();
+setInterval(checkHealth, 30000);
+
+// --- Set start-date max to yesterday (no today or future) ------------------
+(function() {
+  const now = new Date();
+  const todayStr = now.toISOString().split("T")[0];
+  now.setDate(now.getDate() - 1);
+  const yesterdayStr = now.toISOString().split("T")[0];
+  document.getElementById("startDate").max = yesterdayStr;
+  document.getElementById("endDate").max = todayStr;
+})();
+
+// --- Generate --------------------------------------------------------------
+async function generate() {
+  const btn   = document.getElementById("btnGenerate");
+  const dlBtn = document.getElementById("btnDownload");
+  const msg   = document.getElementById("msg");
+  const sum   = document.getElementById("summary");
+
+  const clientEl   = document.getElementById("clientName");
+  const clientSlug = clientEl.value.trim();
+  const clientLabel = clientEl.selectedOptions[0]?.text || clientSlug;
+  const startRaw   = document.getElementById("startDate").value;
+  const endRaw     = document.getElementById("endDate").value;
+
+  // Client-side validation
+  if (!clientSlug) {
+    msg.textContent = "Please select a client.";
+    msg.className = "msg error";
+    return;
+  }
+  if (!startRaw || !endRaw) {
+    msg.textContent = "Please select both a start and end date.";
+    msg.className = "msg error";
+    return;
+  }
+  if (startRaw >= endRaw) {
+    msg.textContent = "Start date must be before end date.";
+    msg.className = "msg error";
+    return;
+  }
+
+  const body = {
+    client_name: clientSlug,
+    client_label: clientLabel,
+    start_date:  formatDate(startRaw),
+    end_date:    formatDate(endRaw),
+  };
+
+  // UI: loading state
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Generating\u2026';
+  dlBtn.disabled = true;
+  msg.className = "msg";
+  sum.className = "summary";
+  currentReportId = null;
+
+  try {
+    const res = await fetch(API + "/api/v1/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || "Request failed (" + res.status + ")");
+    }
+
+    currentReportId = data.report_id;
+    msg.textContent = "Report generated for " + clientLabel + ".";
+    msg.className = "msg success";
+    dlBtn.disabled = false;
+
+    if (data.summary) {
+      const s = data.summary;
+      let info =
+        "<span>" + s.total + "</span> items processed \u00b7 " +
+        "<span>" + s.ok + "</span> placed \u00b7 " +
+        "<span>" + s.errors + "</span> errors";
+      if (s.ndr_images != null) {
+        info += " \u00b7 <span>" + s.ndr_images + "</span> NDR images";
+      }
+      if (s.csv_tables != null) {
+        info += " \u00b7 <span>" + s.csv_tables + "</span> CSV tables";
+      }
+      sum.innerHTML = info;
+      sum.className = "summary show";
+    }
+    if (data.ndr_warning) {
+      sum.innerHTML = (sum.innerHTML || "") +
+        "<br>NDR: " + data.ndr_warning;
+      sum.className = "summary show";
+    }
+    if (data.csv_warning) {
+      sum.innerHTML = (sum.innerHTML || "") +
+        "<br>CSV: " + data.csv_warning;
+      sum.className = "summary show";
+    }
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = "msg error";
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = "Generate Report";
+  }
+}
+
+// --- Download --------------------------------------------------------------
+async function download() {
+  if (!currentReportId) return;
+
+  const dlBtn = document.getElementById("btnDownload");
+  const clientName = document.getElementById("clientName").value || "report";
+  const origText = dlBtn.textContent;
+  dlBtn.disabled = true;
+  dlBtn.textContent = "Downloading\u2026";
+
+  try {
+    // Use direct link instead of blob URL to avoid HTTP security warnings
+    const downloadUrl = API + "/api/v1/download/" + currentReportId;
+    const filename = clientName.replace(/\s+/g, "_") + "_report.pptx";
+    
+    // Check if download endpoint is accessible first
+    const checkRes = await fetch(downloadUrl, { method: 'HEAD' });
+    if (!checkRes.ok) {
+      throw new Error("Report file not found or expired");
+    }
+    
+    // Create temporary link and trigger download (no blob URL needed)
+    const a = document.createElement("a");
+    a.href = downloadUrl;
+    a.download = filename;
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    
+    // Cleanup after a short delay
+    setTimeout(() => {
+      document.body.removeChild(a);
+    }, 100);
+    
+  } catch (err) {
+    const msg = document.getElementById("msg");
+    msg.textContent = err.message;
+    msg.className = "msg error";
+  } finally {
+    dlBtn.disabled = false;
+    dlBtn.textContent = origText;
+  }
+}
+</script>
+
+</body>
+</html>

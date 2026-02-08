@@ -1,0 +1,38 @@
+# Systemd service file for SHM Report Generator
+# Place this in /etc/systemd/system/shm-reports.service
+#
+# After creating the file:
+# sudo systemctl daemon-reload
+# sudo systemctl enable shm-reports
+# sudo systemctl start shm-reports
+# sudo systemctl status shm-reports
+
+[Unit]
+Description=SHM Report Generator API
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/shm-reports
+Environment="PATH=/var/www/shm-reports/venv/bin"
+Environment="PYTHONUNBUFFERED=1"
+Environment="SHM_GOOGLE_CREDENTIALS=/var/www/shm-reports/Credentials/focal-set-486609-s9-f052f8c1a756.json"
+ExecStart=/var/www/shm-reports/venv/bin/python run.py serve --production --port 5000 --workers 4
+
+# Restart policy
+Restart=always
+RestartSec=5
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=shm-reports
+
+[Install]
+WantedBy=multi-user.target

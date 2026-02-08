@@ -1,0 +1,48 @@
+# Credentials and secrets
+Credentials/
+*.json
+!manifests/*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Claude
+.claude/
+
+# Generated output
+output/
+
+# Cached client data
+assets/ndr_cache/
+assets/pdf_extracted/
+
+# Windows artifacts
+nul
+
+# Pip artifacts
+=4.0.0
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store

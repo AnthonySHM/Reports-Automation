@@ -1,0 +1,8 @@
+slide_index,placeholder_id,image_path,box_x_emu,box_y_emu,box_w_emu,box_h_emu,label
+0,-1,dashboard_overview.png,457200,914400,8229600,4572000,Security Dashboard Overview
+1,-1,threat_map.png,457200,914400,4114800,4572000,Global Threat Map
+1,-1,vuln_summary.png,4572000,914400,4114800,4572000,Vulnerability Summary
+2,-1,incident_timeline.png,457200,914400,8229600,4572000,Incident Response Timeline
+3,-1,compliance_chart.png,457200,914400,4114800,2286000,Compliance Status
+3,-1,risk_matrix.png,4572000,914400,4114800,2286000,Risk Assessment Matrix
+3,-1,patch_status.png,457200,3200400,8229600,2286000,Patch Management Status
