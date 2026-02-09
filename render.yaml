@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: shm-reports
+    runtime: python
+    plan: free
+    buildCommand: ./build.sh
+    startCommand: ./start-render.sh
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.11"
+      - key: SHM_LOG_LEVEL
+        value: INFO
+      - key: GOOGLE_CREDENTIALS_JSON
+        sync: false  # Set this manually in the Render dashboard
