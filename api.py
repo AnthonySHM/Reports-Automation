@@ -18,16 +18,19 @@ GET  /api/v1/audit/<report_id>
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
 import re
+import secrets
 import uuid
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request, send_file, session, redirect
 from flask_cors import CORS
+from werkzeug.security import generate_password_hash, check_password_hash
 from pptx import Presentation as PptxPresentation
 
 from core.report_generator import ReportGenerator, ImageSourceError, SlideLayoutError
@@ -54,7 +57,29 @@ from create_template import build_multi_sensor_template
 # App setup
 # ---------------------------------------------------------------------------
 app = Flask(__name__, static_folder="frontend", static_url_path="/static")
-CORS(app)
+app.secret_key = os.getenv("SHM_SECRET_KEY", secrets.token_hex(32))
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+CORS(app, supports_credentials=True)
+
+# ---------------------------------------------------------------------------
+# Authentication
+# ---------------------------------------------------------------------------
+_ADMIN_USER = "admin"
+_ADMIN_PASSWORD_HASH = generate_password_hash("Kx9#mP2vL$8nQw4jR6tY!")
+
+
+def login_required(f):
+    """Decorator that blocks unauthenticated access to protected routes."""
+    @functools.wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get("authenticated"):
+            # API requests get 401 JSON; browser requests get redirected
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "Authentication required"}), 401
+            return redirect("/login")
+        return f(*args, **kwargs)
+    return decorated
 
 # Add response headers to handle downloads over HTTP
 @app.after_request
@@ -257,14 +282,61 @@ def _personalise_cover(pptx_path: Path, client_name: str,
 
 
 # ---------------------------------------------------------------------------
+# Login / Logout
+# ---------------------------------------------------------------------------
+@app.route("/login")
+def login_page():
+    """Serve the login page. If already authenticated, redirect to app."""
+    if session.get("authenticated"):
+        return redirect("/")
+    return send_file("frontend/login.html")
+
+
+@app.route("/api/v1/login", methods=["POST"])
+def api_login():
+    """Authenticate user and create session."""
+    data = request.get_json(silent=True) or {}
+    username = data.get("username", "").strip()
+    password = data.get("password", "")
+
+    if username == _ADMIN_USER and check_password_hash(_ADMIN_PASSWORD_HASH, password):
+        session["authenticated"] = True
+        session["user"] = username
+        logger.info("Login successful for user '%s' from %s", username, request.remote_addr)
+        return jsonify({"status": "ok", "message": "Login successful"})
+
+    logger.warning("Failed login attempt for user '%s' from %s", username, request.remote_addr)
+    return jsonify({"error": "Invalid username or password"}), 401
+
+
+@app.route("/api/v1/logout", methods=["POST"])
+def api_logout():
+    """Clear session and log out."""
+    user = session.get("user", "unknown")
+    session.clear()
+    logger.info("User '%s' logged out", user)
+    return jsonify({"status": "ok", "message": "Logged out"})
+
+
+@app.route("/api/v1/auth/check", methods=["GET"])
+def auth_check():
+    """Check if current session is authenticated."""
+    if session.get("authenticated"):
+        return jsonify({"authenticated": True, "user": session.get("user")})
+    return jsonify({"authenticated": False}), 401
+
+
+# ---------------------------------------------------------------------------
 # Frontend
 # ---------------------------------------------------------------------------
 @app.route("/")
+@login_required
 def index():
     return send_file("frontend/index.html")
 
 
 @app.route("/favicon.ico")
+@login_required
 def favicon():
     """Return 204 No Content for favicon to prevent 404 errors."""
     return "", 204
@@ -282,6 +354,7 @@ def health():
 # Generate report
 # ---------------------------------------------------------------------------
 @app.route("/api/v1/generate", methods=["POST"])
+@login_required
 def generate_report():
     """Trigger report generation.
 
@@ -963,6 +1036,7 @@ def generate_report():
 # Download report
 # ---------------------------------------------------------------------------
 @app.route("/api/v1/download/<report_id>", methods=["GET", "HEAD"])
+@login_required
 def download_report(report_id: str):
     """Download a generated .pptx by report ID with formatted filename."""
     output_path = OUTPUT_DIR / f"{report_id}.pptx"
@@ -998,6 +1072,7 @@ def download_report(report_id: str):
 # Audit trail
 # ---------------------------------------------------------------------------
 @app.route("/api/v1/audit/<report_id>", methods=["GET"])
+@login_required
 def get_audit(report_id: str):
     """Retrieve the JSON audit trail for a completed report."""
     audit_path = OUTPUT_DIR / f"{report_id}.audit.json"

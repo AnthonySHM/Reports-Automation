@@ -87,12 +87,25 @@
   }
   .summary.show{display:block}
   .summary span{font-weight:600}
+
+  /* Header with logout */
+  .header-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px}
+  .btn-logout{
+    padding:5px 12px;border:1px solid var(--border);border-radius:var(--radius);
+    background:var(--surface);color:var(--text-muted);font-size:.78rem;
+    cursor:pointer;transition:background .15s,color .15s;
+    flex:none;width:auto;
+  }
+  .btn-logout:hover{background:#fef2f2;color:var(--error);border-color:var(--error-border)}
 </style>
 </head>
 <body>
 
 <div class="card">
-  <h1>SHM Report Generator</h1>
+  <div class="header-row">
+    <h1>SHM Report Generator</h1>
+    <button class="btn-logout" onclick="logout()">Sign Out</button>
+  </div>
   <p class="subtitle">Generate and download PowerPoint reports</p>
 
   <div class="status-row">
@@ -146,6 +159,26 @@ const API = "";
 
 let currentReportId = null;
 
+// --- Auth check: redirect to login if session expired ----------------------
+async function checkAuth() {
+  try {
+    const r = await fetch("/api/v1/auth/check", { credentials: "same-origin" });
+    if (!r.ok) window.location.href = "/login";
+  } catch { /* network error — let health check handle it */ }
+}
+checkAuth();
+
+// --- Logout ----------------------------------------------------------------
+async function logout() {
+  try {
+    await fetch("/api/v1/logout", {
+      method: "POST",
+      credentials: "same-origin",
+    });
+  } catch { /* ignore */ }
+  window.location.href = "/login";
+}
+
 // --- Helpers ---------------------------------------------------------------
 function formatDate(isoStr) {
   // "2026-01-22" → "22 January 2026"
@@ -187,7 +220,7 @@ async function checkHealth() {
   const dot  = document.getElementById("healthDot");
   const text = document.getElementById("healthText");
   try {
-    const r = await fetch(API + "/api/v1/health");
+    const r = await fetch(API + "/api/v1/health", { credentials: "same-origin" });
     const d = await r.json();
     dot.className  = "dot ok";
     text.textContent = "Backend connected \u2014 " + d.engine;
@@ -258,10 +291,12 @@ async function generate() {
     const res = await fetch(API + "/api/v1/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
       body: JSON.stringify(body),
     });
     const data = await res.json();
 
+    if (res.status === 401) { window.location.href = "/login"; return; }
     if (!res.ok) {
       throw new Error(data.error || "Request failed (" + res.status + ")");
     }
@@ -321,7 +356,7 @@ async function download() {
     const filename = clientName.replace(/\s+/g, "_") + "_report.pptx";
     
     // Check if download endpoint is accessible first
-    const checkRes = await fetch(downloadUrl, { method: 'HEAD' });
+    const checkRes = await fetch(downloadUrl, { method: 'HEAD', credentials: 'same-origin' });
     if (!checkRes.ok) {
       throw new Error("Report file not found or expired");
     }
