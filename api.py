@@ -68,6 +68,27 @@ CORS(app, supports_credentials=True)
 _ADMIN_USER = "admin"
 _ADMIN_PASSWORD_HASH = generate_password_hash("Kx9#mP2vL$8nQw4jR6tY!")
 
+# ---------------------------------------------------------------------------
+# User store (JSON file)
+# ---------------------------------------------------------------------------
+_USERS_FILE = Path(os.getenv("SHM_BASE_DIR", ".")) / "users.json"
+_CLEARANCE_CODE = "SHM"  # only accepted security clearance
+
+
+def _load_users() -> dict:
+    """Load registered users from JSON file."""
+    if _USERS_FILE.exists():
+        try:
+            return json.loads(_USERS_FILE.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _save_users(users: dict) -> None:
+    """Persist registered users to JSON file."""
+    _USERS_FILE.write_text(json.dumps(users, indent=2), encoding="utf-8")
+
 
 def login_required(f):
     """Decorator that blocks unauthenticated access to protected routes."""
@@ -299,7 +320,16 @@ def api_login():
     username = data.get("username", "").strip()
     password = data.get("password", "")
 
+    # Check hardcoded admin
     if username == _ADMIN_USER and check_password_hash(_ADMIN_PASSWORD_HASH, password):
+        session["authenticated"] = True
+        session["user"] = username
+        logger.info("Login successful for user '%s' from %s", username, request.remote_addr)
+        return jsonify({"status": "ok", "message": "Login successful"})
+
+    # Check registered users
+    users = _load_users()
+    if username in users and check_password_hash(users[username]["password_hash"], password):
         session["authenticated"] = True
         session["user"] = username
         logger.info("Login successful for user '%s' from %s", username, request.remote_addr)
@@ -316,6 +346,55 @@ def api_logout():
     session.clear()
     logger.info("User '%s' logged out", user)
     return jsonify({"status": "ok", "message": "Logged out"})
+
+
+@app.route("/register")
+def register_page():
+    """Serve the registration page. If already authenticated, redirect to app."""
+    if session.get("authenticated"):
+        return redirect("/")
+    return send_file("frontend/register.html")
+
+
+@app.route("/api/v1/register", methods=["POST"])
+def api_register():
+    """Create a new user account after clearance verification."""
+    data = request.get_json(silent=True) or {}
+    username = data.get("username", "").strip()
+    password = data.get("password", "")
+    clearance = data.get("clearance", "").strip()
+
+    # Validate fields
+    if not username or len(username) < 3:
+        return jsonify({"error": "Username must be at least 3 characters"}), 400
+    if not password or len(password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters"}), 400
+
+    # Block reserved admin username
+    if username.lower() == _ADMIN_USER:
+        return jsonify({"error": "Username is not available"}), 409
+
+    # Check if username already taken
+    users = _load_users()
+    if username in users:
+        return jsonify({"error": "Username is already taken"}), 409
+
+    # Verify security clearance — only "SHM" is accepted
+    if clearance != _CLEARANCE_CODE:
+        logger.warning(
+            "Registration denied for '%s' — invalid clearance from %s",
+            username, request.remote_addr,
+        )
+        return jsonify({"error": "Invalid clearance code. Access denied."}), 403
+
+    # All checks passed — create user
+    users[username] = {
+        "password_hash": generate_password_hash(password),
+        "created_at": datetime.now().isoformat(),
+    }
+    _save_users(users)
+    logger.info("New user '%s' registered from %s", username, request.remote_addr)
+    return jsonify({"status": "ok", "message": "Account created successfully"}), 201
 
 
 @app.route("/api/v1/auth/check", methods=["GET"])

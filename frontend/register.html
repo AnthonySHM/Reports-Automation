@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SHM Report Generator — Create Account</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg:#f5f7fa;--surface:#fff;--border:#e1e5eb;
+    --text:#1a1a2e;--text-muted:#6b7280;
+    --primary:#2563eb;--primary-hover:#1d4ed8;--primary-disabled:#93b4f5;
+    --error:#dc2626;--error-bg:#fef2f2;--error-border:#fecaca;
+    --success:#16a34a;--success-bg:#f0fdf4;--success-border:#bbf7d0;
+    --radius:8px;
+  }
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:var(--bg);color:var(--text);
+    min-height:100vh;display:flex;align-items:center;justify-content:center;
+    padding:24px;
+  }
+  .card{
+    background:var(--surface);border:1px solid var(--border);
+    border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);
+    width:100%;max-width:440px;padding:36px 32px;
+  }
+  .shield-icon{
+    width:48px;height:48px;margin:0 auto 16px;display:flex;
+    align-items:center;justify-content:center;
+    background:#eff6ff;border-radius:50%;color:var(--primary);
+  }
+  .shield-icon svg{width:24px;height:24px}
+  h1{font-size:1.25rem;font-weight:600;text-align:center;margin-bottom:4px}
+  .subtitle{color:var(--text-muted);font-size:.85rem;text-align:center;margin-bottom:28px}
+
+  label{display:block;font-size:.8rem;font-weight:500;margin-bottom:6px;color:var(--text-muted)}
+  input[type=text],input[type=password]{
+    width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);
+    font-size:.9rem;color:var(--text);background:var(--surface);
+    outline:none;transition:border-color .15s;
+  }
+  input:focus{border-color:var(--primary)}
+  .field{margin-bottom:16px}
+
+  /* Step indicator */
+  .steps{display:flex;justify-content:center;gap:8px;margin-bottom:24px}
+  .step-dot{
+    width:10px;height:10px;border-radius:50%;background:var(--border);
+    transition:background .3s;
+  }
+  .step-dot.active{background:var(--primary)}
+  .step-dot.done{background:var(--success)}
+
+  /* Step panels */
+  .step-panel{display:none}
+  .step-panel.active{display:block}
+
+  button{
+    width:100%;padding:11px 18px;border:none;border-radius:var(--radius);
+    font-size:.9rem;font-weight:500;cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center;gap:8px;
+    transition:background .15s,opacity .15s;
+    margin-top:8px;
+  }
+  .btn-primary{background:var(--primary);color:#fff}
+  .btn-primary:hover:not(:disabled){background:var(--primary-hover)}
+  .btn-primary:disabled{background:var(--primary-disabled);cursor:not-allowed}
+  .btn-secondary{
+    background:transparent;color:var(--primary);border:1px solid var(--border);
+    margin-top:6px;
+  }
+  .btn-secondary:hover{background:#f8fafc}
+
+  .spinner{
+    width:16px;height:16px;border:2px solid rgba(255,255,255,.35);
+    border-top-color:#fff;border-radius:50%;
+    animation:spin .6s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  .msg{
+    margin-top:16px;padding:10px 14px;border-radius:var(--radius);
+    font-size:.85rem;line-height:1.45;display:none;text-align:center;
+  }
+  .msg.error{display:block;background:var(--error-bg);border:1px solid var(--error-border);color:var(--error)}
+  .msg.success{display:block;background:var(--success-bg);border:1px solid var(--success-border);color:var(--success)}
+
+  .show-pw{
+    display:flex;align-items:center;gap:6px;margin-top:8px;
+    font-size:.78rem;color:var(--text-muted);cursor:pointer;user-select:none;
+  }
+  .show-pw input{width:auto;margin:0}
+
+  .login-link{
+    display:block;text-align:center;margin-top:20px;
+    font-size:.82rem;color:var(--text-muted);
+  }
+  .login-link a{color:var(--primary);text-decoration:none;font-weight:500}
+  .login-link a:hover{text-decoration:underline}
+
+  /* Clearance field styling */
+  .clearance-header{
+    font-size:.9rem;font-weight:600;text-align:center;
+    color:var(--error);margin-bottom:12px;text-transform:uppercase;
+    letter-spacing:.5px;
+  }
+  .clearance-hint{
+    font-size:.75rem;color:var(--text-muted);margin-top:6px;
+    font-style:italic;text-align:center;
+  }
+  .clearance-note{
+    font-size:.78rem;color:var(--text-muted);
+    margin-bottom:16px;text-align:center;line-height:1.5;
+  }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="shield-icon">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
+    </svg>
+  </div>
+  <h1>Create Account</h1>
+  <p class="subtitle">Complete all steps to register</p>
+
+  <!-- Step indicators -->
+  <div class="steps">
+    <div class="step-dot active" id="dot1"></div>
+    <div class="step-dot" id="dot2"></div>
+    <div class="step-dot" id="dot3"></div>
+  </div>
+
+  <!-- Step 1: Username -->
+  <div class="step-panel active" id="step1">
+    <div class="field">
+      <label for="username">Choose a username</label>
+      <input type="text" id="username" placeholder="Enter username" required autofocus>
+    </div>
+    <button type="button" class="btn-primary" onclick="goToStep(2)">Next</button>
+  </div>
+
+  <!-- Step 2: Password -->
+  <div class="step-panel" id="step2">
+    <div class="field">
+      <label for="password">Create a password</label>
+      <input type="password" id="password" placeholder="Min. 6 characters" required>
+    </div>
+    <div class="field">
+      <label for="confirmPassword">Confirm password</label>
+      <input type="password" id="confirmPassword" placeholder="Re-enter password" required>
+      <label class="show-pw">
+        <input type="checkbox" onchange="togglePassword(this)"> Show password
+      </label>
+    </div>
+    <button type="button" class="btn-primary" onclick="goToStep(3)">Next</button>
+    <button type="button" class="btn-secondary" onclick="goToStep(1)">Back</button>
+  </div>
+
+  <!-- Step 3: Security Clearance -->
+  <div class="step-panel" id="step3">
+    <div class="clearance-header">Security Clearance Required</div>
+    <div class="clearance-note">
+      All accounts require Level-3 clearance verification.<br>
+      Enter your assigned 6-digit clearance code below.
+    </div>
+    <div class="field">
+      <label for="clearance">Clearance Code</label>
+      <input type="text" id="clearance" placeholder="e.g. 483021" autocomplete="off" required>
+      <div class="clearance-hint">Contact your system administrator if you have not received your numeric access code.</div>
+    </div>
+    <button type="button" class="btn-primary" id="btnRegister" onclick="handleRegister()">Create Account</button>
+    <button type="button" class="btn-secondary" onclick="goToStep(2)">Back</button>
+  </div>
+
+  <div class="msg" id="msg"></div>
+
+  <div class="login-link">
+    Already have an account? <a href="/login">Sign in</a>
+  </div>
+</div>
+
+<script>
+let currentStep = 1;
+
+function goToStep(step) {
+  const msg = document.getElementById("msg");
+  msg.className = "msg";
+
+  // Validate before advancing
+  if (step === 2 && currentStep === 1) {
+    const username = document.getElementById("username").value.trim();
+    if (!username) {
+      msg.textContent = "Please enter a username.";
+      msg.className = "msg error";
+      return;
+    }
+    if (username.length < 3) {
+      msg.textContent = "Username must be at least 3 characters.";
+      msg.className = "msg error";
+      return;
+    }
+  }
+
+  if (step === 3 && currentStep === 2) {
+    const pw = document.getElementById("password").value;
+    const cpw = document.getElementById("confirmPassword").value;
+    if (!pw || !cpw) {
+      msg.textContent = "Please fill in both password fields.";
+      msg.className = "msg error";
+      return;
+    }
+    if (pw.length < 6) {
+      msg.textContent = "Password must be at least 6 characters.";
+      msg.className = "msg error";
+      return;
+    }
+    if (pw !== cpw) {
+      msg.textContent = "Passwords do not match.";
+      msg.className = "msg error";
+      return;
+    }
+  }
+
+  // Switch panels
+  document.getElementById("step" + currentStep).classList.remove("active");
+  document.getElementById("step" + step).classList.add("active");
+
+  // Update dots
+  for (let i = 1; i <= 3; i++) {
+    const dot = document.getElementById("dot" + i);
+    dot.classList.remove("active", "done");
+    if (i < step) dot.classList.add("done");
+    else if (i === step) dot.classList.add("active");
+  }
+
+  currentStep = step;
+
+  // Focus first input of new step
+  const panel = document.getElementById("step" + step);
+  const firstInput = panel.querySelector("input");
+  if (firstInput) firstInput.focus();
+}
+
+function togglePassword(cb) {
+  const pw = document.getElementById("password");
+  const cpw = document.getElementById("confirmPassword");
+  pw.type = cb.checked ? "text" : "password";
+  cpw.type = cb.checked ? "text" : "password";
+}
+
+async function handleRegister() {
+  const btn = document.getElementById("btnRegister");
+  const msg = document.getElementById("msg");
+
+  const username = document.getElementById("username").value.trim();
+  const password = document.getElementById("password").value;
+  const clearance = document.getElementById("clearance").value.trim();
+
+  if (!clearance) {
+    msg.textContent = "Please enter your 6-digit clearance code.";
+    msg.className = "msg error";
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Verifying clearance\u2026';
+  msg.className = "msg";
+
+  try {
+    const res = await fetch("/api/v1/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ username, password, clearance }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || "Registration failed");
+    }
+
+    msg.textContent = "Account created successfully! Redirecting to login\u2026";
+    msg.className = "msg success";
+
+    setTimeout(() => { window.location.href = "/login"; }, 1500);
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = "msg error";
+    document.getElementById("clearance").value = "";
+    document.getElementById("clearance").focus();
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = "Create Account";
+  }
+}
+
+// If already authenticated, redirect immediately
+fetch("/api/v1/auth/check", { credentials: "same-origin" })
+  .then(r => { if (r.ok) window.location.href = "/"; });
+</script>
+
+</body>
+</html>
