@@ -10,6 +10,8 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -144,10 +146,11 @@ class PatchHistoryManager:
         num_points: int = 3
     ) -> tuple[list[str], list[int], list[int]]:
         """Get trend data for chart generation.
-        
-        Automatically includes the current report period as the last data point,
-        updating or adding it to the historical data.
-        
+
+        Returns the most recent *num_points* history entries ending with the
+        current report month (``end_date``).  Entries are taken from whatever
+        months exist in history (no forced consecutive-month gaps).
+
         Parameters
         ----------
         client_slug : str
@@ -160,51 +163,329 @@ class PatchHistoryManager:
             Current count of missing software packages
         num_points : int
             Number of data points to include in the trend (default: 3)
-        
+
         Returns
         -------
         tuple[list[str], list[int], list[int]]
             (dates, microsoft_counts, software_counts) for chart generation
-            Dates are formatted as "Month Day" (e.g., "January 5")
+            Dates are formatted as month names (e.g., "January")
         """
         # Add/update current entry
         self.add_entry(client_slug, end_date, microsoft_count, software_count)
-        
+
         # Load updated history
         history = self.load_history(client_slug)
-        
+
         if not history:
             logger.warning("No history available for '%s'", client_slug)
             return [], [], []
-        
-        # Take the most recent N entries
-        recent = history[-num_points:]
-        
-        # Format dates for display
+
+        current_dt = datetime.strptime(end_date, '%Y-%m-%d')
+        current_ym = (current_dt.year, current_dt.month)
+
+        # Freshness cutoff: drop entries older than num_points+3 months
+        cutoff_m = current_dt.month - (num_points + 3)
+        cutoff_y = current_dt.year
+        while cutoff_m <= 0:
+            cutoff_m += 12
+            cutoff_y -= 1
+        cutoff_ym = (cutoff_y, cutoff_m)
+
+        # Deduplicate by (year, month) keeping the most recent entry per
+        # month, and discard entries that are too old or in the future.
+        month_best: dict[tuple[int, int], dict] = {}
+        for entry in history:
+            try:
+                dt = datetime.strptime(entry['date'], '%Y-%m-%d')
+                ym = (dt.year, dt.month)
+            except Exception:
+                continue
+            if ym < cutoff_ym or ym > current_ym:
+                continue
+            if ym not in month_best or entry['date'] > month_best[ym]['date']:
+                month_best[ym] = entry
+
+        # Sort by month and take the most recent num_points entries
+        deduped = sorted(month_best.values(), key=lambda e: e['date'])
+        recent = deduped[-num_points:]
+
+        # Persist the cleaned-up history so stale entries don't return
+        self.save_history(client_slug, deduped)
+
+        # --- Guarantee exactly num_points months ----------------------
+        # If we have fewer entries than required, pad the beginning with
+        # the consecutive months before the earliest entry so the chart
+        # always has the right number of data points.  Padded months
+        # carry the same counts as the earliest real entry so the line
+        # stays flat rather than dropping to zero.
+        if len(recent) < num_points:
+            earliest = recent[0] if recent else {
+                'date': end_date,
+                'microsoft_count': microsoft_count,
+                'software_count': software_count,
+            }
+            earliest_dt = datetime.strptime(earliest['date'], '%Y-%m-%d')
+            pad_entries: list[dict] = []
+            for i in range(num_points - len(recent), 0, -1):
+                pm = earliest_dt.month - i
+                py = earliest_dt.year
+                while pm <= 0:
+                    pm += 12
+                    py -= 1
+                pad_entries.append({
+                    'date': f"{py:04d}-{pm:02d}-01",
+                    'microsoft_count': earliest['microsoft_count'],
+                    'software_count': earliest['software_count'],
+                })
+            recent = pad_entries + recent
+
+        # Format dates for display (month name only)
         dates = []
         for entry in recent:
             try:
                 date_obj = datetime.strptime(entry['date'], '%Y-%m-%d')
-                # Format as "Month Day" (e.g., "January 5")
-                formatted = date_obj.strftime('%B %d')
-                # Remove leading zero from day (e.g., "January 05" -> "January 5")
-                parts = formatted.split()
-                if len(parts) == 2 and parts[1].startswith('0'):
-                    formatted = f"{parts[0]} {parts[1].lstrip('0')}"
-                dates.append(formatted)
+                dates.append(date_obj.strftime('%B'))
             except:
-                # Fallback: use raw date
                 dates.append(entry['date'])
-        
+
         microsoft_counts = [entry['microsoft_count'] for entry in recent]
         software_counts = [entry['software_count'] for entry in recent]
-        
+
         logger.info(
             "Generated trend data for '%s': %d points, latest = MS:%d SW:%d",
             client_slug, len(dates), microsoft_counts[-1], software_counts[-1]
         )
-        
+
         return dates, microsoft_counts, software_counts
+
+
+def extract_patch_counts_from_pptx(pptx_path: str | Path) -> tuple[int, int] | None:
+    """Extract Microsoft KB and software patch counts from a PPTX report.
+
+    First tries the named shape ``required_patches_body``.  If that is not
+    found (e.g. the file was round-tripped through Google Slides, which
+    renames shapes), falls back to scanning *every* text frame for the
+    characteristic patch-count sentences.
+
+    Returns
+    -------
+    tuple[int, int] | None
+        ``(ms_count, sw_count)`` or ``None`` if the counts cannot be parsed.
+    """
+    from pptx import Presentation as PptxPresentation
+
+    _MS_RE = re.compile(r"currently\s+(\d+)\s+Microsoft\s+KB", re.IGNORECASE)
+    _SW_RE = re.compile(r"(\d+)\s+software\s+packages", re.IGNORECASE)
+
+    try:
+        prs = PptxPresentation(str(pptx_path))
+    except Exception as exc:
+        logger.warning("Could not open PPTX '%s': %s", pptx_path, exc)
+        return None
+
+    def _try_extract(text: str) -> tuple[int, int] | None:
+        ms_match = _MS_RE.search(text)
+        sw_match = _SW_RE.search(text)
+        ms = int(ms_match.group(1)) if ms_match else None
+        sw = int(sw_match.group(1)) if sw_match else None
+        if ms is not None or sw is not None:
+            return (ms or 0, sw or 0)
+        return None
+
+    # Pass 1: look for the named shape (our own template)
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if shape.name == "required_patches_body" and shape.has_text_frame:
+                result = _try_extract(shape.text_frame.text)
+                if result:
+                    logger.info("Extracted patch counts (named shape) from '%s': MS=%s, SW=%s",
+                                pptx_path, *result)
+                    return result
+
+    # Pass 2: scan all text frames (handles Google Slides renamed shapes)
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if not shape.has_text_frame:
+                continue
+            result = _try_extract(shape.text_frame.text)
+            if result:
+                logger.info("Extracted patch counts (text scan) from '%s': MS=%s, SW=%s",
+                            pptx_path, *result)
+                return result
+
+    logger.warning("No patch count text found in '%s'", pptx_path)
+    return None
+
+
+def estimate_report_date_from_pptx(
+    pptx_path: str | Path, drive_modified_time: str | None = None
+) -> str | None:
+    """Estimate the report date from a PPTX file.
+
+    Looks for text matching ``"… to <day> <Month> <year>"`` — first in a
+    shape named ``reporting_period`` on the cover slide, then by scanning
+    all text frames on the first few slides (handles Google Slides renamed
+    shapes).
+
+    Falls back to the Drive ``modifiedTime`` if parsing fails.
+
+    Returns
+    -------
+    str | None
+        Date string in ``YYYY-MM-DD`` format, or ``None``.
+    """
+    from pptx import Presentation as PptxPresentation
+
+    _DATE_RE = re.compile(r"to\s+(\d{1,2}\s+\w+\s+\d{4})", re.IGNORECASE)
+
+    def _try_parse(text: str) -> str | None:
+        match = _DATE_RE.search(text)
+        if match:
+            try:
+                return datetime.strptime(match.group(1), "%d %B %Y").strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+        return None
+
+    try:
+        prs = PptxPresentation(str(pptx_path))
+        if prs.slides:
+            cover = prs.slides[0]
+
+            # Pass 1: named shape
+            for shape in cover.shapes:
+                if shape.name == "reporting_period" and shape.has_text_frame:
+                    result = _try_parse(shape.text_frame.text)
+                    if result:
+                        return result
+
+            # Pass 2: any text frame on the cover slide
+            for shape in cover.shapes:
+                if shape.has_text_frame:
+                    result = _try_parse(shape.text_frame.text)
+                    if result:
+                        logger.info("Parsed report date (text scan) from cover slide: %s", result)
+                        return result
+    except Exception as exc:
+        logger.warning("Could not parse report date from '%s': %s", pptx_path, exc)
+
+    # Fallback to Drive modifiedTime
+    if drive_modified_time:
+        try:
+            dt = datetime.fromisoformat(drive_modified_time.replace("Z", "+00:00"))
+            return dt.strftime("%Y-%m-%d")
+        except Exception as exc:
+            logger.warning("Could not parse Drive modifiedTime '%s': %s", drive_modified_time, exc)
+
+    return None
+
+
+def seed_history_from_drive(
+    client_slug: str,
+    drive_agent,
+    manager: PatchHistoryManager | None = None,
+    storage_path: str | Path = "assets/patch_history",
+    count: int = 4,
+    current_end_date: str | None = None,
+) -> int:
+    """Seed local patch history by extracting data from previous PPTX reports
+    found in the client's top-level Drive folder (Archive is excluded).
+
+    PPTX files whose report date falls in the same month as
+    *current_end_date* are skipped because the current report already
+    provides that month's data.
+
+    Parameters
+    ----------
+    client_slug : str
+        Client identifier.
+    drive_agent
+        A ``DriveAgent`` instance.
+    manager : PatchHistoryManager | None
+        Existing manager instance (created if ``None``).
+    storage_path : str | Path
+        Directory for patch history storage.
+    count : int
+        Number of PPTX files to download (default: 4, extra buffer so
+        that after skipping the current month we still have enough).
+    current_end_date : str | None
+        The current report's end date (``YYYY-MM-DD``).  PPTX reports
+        from the same month are skipped.
+
+    Returns
+    -------
+    int
+        Number of history entries added.
+    """
+    if manager is None:
+        manager = PatchHistoryManager(storage_path)
+
+    # Determine current month so we can skip PPTX files from it
+    current_ym: tuple[int, int] | None = None
+    if current_end_date:
+        try:
+            _dt = datetime.strptime(current_end_date, "%Y-%m-%d")
+            current_ym = (_dt.year, _dt.month)
+        except Exception:
+            pass
+
+    client_folder = drive_agent.find_client_folder(client_slug)
+    client_folder_id = client_folder["id"]
+
+    pptx_files = drive_agent.find_client_pptx_files(
+        client_folder_id=client_folder_id,
+        client_slug=client_slug,
+        count=count,
+    )
+    if not pptx_files:
+        logger.info("No previous PPTX files found on Drive for '%s'", client_slug)
+        return 0
+
+    added = 0
+    for entry in pptx_files:
+        local_path = entry["local_path"]
+        try:
+            counts = extract_patch_counts_from_pptx(local_path)
+            if counts is None:
+                continue
+            ms_count, sw_count = counts
+
+            report_date = estimate_report_date_from_pptx(
+                local_path, drive_modified_time=entry.get("modified_time"),
+            )
+            if report_date is None:
+                logger.warning("Could not determine date for '%s', skipping", entry["name"])
+                continue
+
+            # Skip if this PPTX is from the same month as the current report
+            if current_ym:
+                try:
+                    rd = datetime.strptime(report_date, "%Y-%m-%d")
+                    if (rd.year, rd.month) == current_ym:
+                        logger.info(
+                            "Skipping '%s' (same month as current report)", entry["name"],
+                        )
+                        continue
+                except Exception:
+                    pass
+
+            manager.add_entry(client_slug, report_date, ms_count, sw_count)
+            added += 1
+            logger.info(
+                "Seeded history for '%s': date=%s MS=%d SW=%d (from '%s')",
+                client_slug, report_date, ms_count, sw_count, entry["name"],
+            )
+        except Exception as exc:
+            logger.warning("Failed to extract data from '%s': %s", entry["name"], exc)
+        finally:
+            # Clean up temp file
+            try:
+                Path(local_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    logger.info("Seeded %d history entries for '%s' from Drive", added, client_slug)
+    return added
 
 
 def generate_patch_trend_chart_for_report(
@@ -216,6 +497,7 @@ def generate_patch_trend_chart_for_report(
     *,
     num_points: int = 3,
     storage_path: str | Path = "assets/patch_history",
+    drive_agent=None,
 ) -> Path:
     """Generate a patch trend chart for a report, automatically managing history.
     
@@ -258,9 +540,22 @@ def generate_patch_trend_chart_for_report(
     ... )
     """
     from core.patch_chart import generate_patch_trend_chart
-    
+
     manager = PatchHistoryManager(storage_path)
-    
+
+    # Seed history from previous PPTX reports in the client folder
+    if drive_agent is not None:
+        try:
+            seed_history_from_drive(
+                client_slug=client_slug,
+                drive_agent=drive_agent,
+                manager=manager,
+                storage_path=storage_path,
+                current_end_date=end_date,
+            )
+        except Exception as exc:
+            logger.warning("Drive history seeding failed (non-fatal): %s", exc)
+
     # Get trend data (automatically updates history)
     dates, ms_counts, sw_counts = manager.get_trend_data(
         client_slug=client_slug,
@@ -284,30 +579,3 @@ def generate_patch_trend_chart_for_report(
         software_counts=sw_counts,
         output_path=output_path,
     )
-
-
-# Convenience function for testing
-if __name__ == "__main__":
-    import time
-    
-    # Test the history manager
-    manager = PatchHistoryManager("assets/patch_history")
-    
-    # Simulate adding historical entries
-    test_data = [
-        ("2025-11-10", 6, 3),
-        ("2025-12-08", 5, 3),
-        ("2026-01-05", 4, 2),
-    ]
-    
-    for date, ms, sw in test_data:
-        manager.add_entry("test_client", date, ms, sw)
-    
-    # Get trend data
-    dates, ms_counts, sw_counts = manager.get_trend_data(
-        "test_client", "2026-01-05", 4, 2
-    )
-    
-    print(f"Dates: {dates}")
-    print(f"Microsoft counts: {ms_counts}")
-    print(f"Software counts: {sw_counts}")

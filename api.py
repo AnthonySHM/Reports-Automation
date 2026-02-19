@@ -36,7 +36,7 @@ from pptx import Presentation as PptxPresentation
 from core.report_generator import ReportGenerator, ImageSourceError, SlideLayoutError
 from core.drive_agent import (
     DriveAgent, DriveAgentError, ClientFolderNotFound, NDRFolderNotFound,
-    VNFolderNotFound, CSVTableAsset,
+    VNFolderNotFound, CSVTableAsset, NDRAsset,
     place_ndr_images, place_csv_tables, place_csv_tables_paginated,
     place_ndr_images_multi_sensor, place_csv_tables_multi_sensor,
     count_unique_kb_patches, count_unique_software_packages, count_inventory_systems,
@@ -44,6 +44,7 @@ from core.drive_agent import (
     build_software_patches_csv, build_ms_patches_csv, replace_kb_count_in_slides,
     replace_ai_insight_in_slide, replace_endpoint_count_in_slide,
 )
+from core.patch_history import generate_patch_trend_chart_for_report
 from core.table_optimizer import optimize_tables, cleanup_placeholder_tables
 from core.slide_utils import delete_slide
 from core.ai_insights import generate_cyber_insight
@@ -597,7 +598,42 @@ def generate_report():
                         result_path, 0, sw_count,
                     )
                     kb_count_populated = replacements > 0
-                
+
+                # Generate patch trend chart image
+                patch_chart_asset: NDRAsset | None = None
+                try:
+                    chart_ms = kb_count if kb_count is not None else 0
+                    chart_sw = sw_count if sw_count is not None else 0
+                    chart_output = NDR_CACHE_DIR / client_name / "patch_trend.png"
+                    # Convert display date (e.g. "26 January 2026") to YYYY-MM-DD
+                    try:
+                        _end_dt = datetime.strptime(end_date, "%d %B %Y")
+                        chart_end_date = _end_dt.strftime("%Y-%m-%d")
+                    except ValueError:
+                        chart_end_date = end_date  # fallback: let history manager handle it
+                    chart_path = generate_patch_trend_chart_for_report(
+                        client_slug=client_name,
+                        end_date=chart_end_date,
+                        microsoft_count=chart_ms,
+                        software_count=chart_sw,
+                        output_path=chart_output,
+                        drive_agent=_drive_agent,
+                    )
+                    if chart_path:
+                        # Slide 14 = index 13 in single-sensor template
+                        patch_chart_asset = NDRAsset(
+                            local_path=Path(chart_path),
+                            slide_index=13,
+                            shape_name="required_patches_chart",
+                            original_filename="patch_trend.png",
+                        )
+                        logger.info(
+                            "Patch trend chart generated: %s (MS=%d, SW=%d)",
+                            chart_path, chart_ms, chart_sw,
+                        )
+                except Exception as exc:
+                    logger.warning("Failed to generate patch trend chart: %s", exc)
+
                 # Generate AI-powered cyber insight for slide 3
                 try:
                     insight = generate_cyber_insight(
@@ -705,6 +741,26 @@ def generate_report():
                 except Exception as exc:
                     ndr_warning = f"NDR fetch error: {exc}"
                     logger.error("NDR fetch failed: %s", exc, exc_info=True)
+
+                # Place patch trend chart on the Required Patches slide (multi-sensor)
+                if patch_chart_asset:
+                    try:
+                        ms_patches_slide_idx = 5 + n_sensors * 10  # Required Patches slide
+                        chart_asset_ms = NDRAsset(
+                            local_path=patch_chart_asset.local_path,
+                            slide_index=ms_patches_slide_idx,
+                            shape_name="required_patches_chart",
+                            original_filename="patch_trend.png",
+                        )
+                        chart_placed = place_ndr_images(result_path, [chart_asset_ms])
+                        if chart_placed:
+                            ndr_placed += chart_placed
+                            logger.info(
+                                "Placed patch trend chart on slide %d (multi-sensor)",
+                                ms_patches_slide_idx,
+                            )
+                    except Exception as exc:
+                        logger.warning("Failed to place patch trend chart (multi-sensor): %s", exc)
 
                 # Fetch and place CSV tables (multi-sensor)
                 try:
@@ -939,14 +995,20 @@ def generate_report():
                         client_slug=client_name,
                         dest_dir=NDR_CACHE_DIR,
                     )
-                    ndr_placed = place_ndr_images(result_path, assets)
-                    logger.info("Placed %d NDR images for '%s'", ndr_placed, client_name)
                 except (ClientFolderNotFound, NDRFolderNotFound) as exc:
                     ndr_warning = str(exc)
                     logger.warning("NDR fetch skipped: %s", exc)
                 except Exception as exc:
                     ndr_warning = f"NDR fetch error: {exc}"
                     logger.error("NDR fetch failed: %s", exc, exc_info=True)
+
+                # Include patch trend chart alongside NDR images
+                if patch_chart_asset:
+                    assets.append(patch_chart_asset)
+
+                if assets:
+                    ndr_placed = place_ndr_images(result_path, assets)
+                    logger.info("Placed %d NDR images for '%s'", ndr_placed, client_name)
 
                 # Fetch CSV files and populate table slides
                 try:

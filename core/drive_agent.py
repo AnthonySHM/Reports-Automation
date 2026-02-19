@@ -449,6 +449,120 @@ class DriveAgent:
             f"Available folders: {available}"
         )
 
+    def find_client_pptx(self, client_folder_id: str, client_slug: str,
+                         dest_dir: Path | str = "assets/tmp") -> Path | None:
+        """Find and download the most recently modified PPTX from a client folder.
+
+        Searches the client folder (top-level only) for ``.pptx`` files and
+        downloads the most recently modified one to a local temp path.
+
+        Parameters
+        ----------
+        client_folder_id : str
+            Google Drive folder ID for the client.
+        client_slug : str
+            Client identifier used for the local filename.
+        dest_dir : Path | str
+            Directory to download the reference PPTX into.
+
+        Returns
+        -------
+        Path | None
+            Path to the downloaded PPTX, or ``None`` if no PPTX found.
+        """
+        dest_dir = Path(dest_dir)
+        pptx_files = self._list_files_by_ext(client_folder_id, {".pptx"})
+        if not pptx_files:
+            logger.warning(
+                "No PPTX files found in client folder %s", client_folder_id,
+            )
+            return None
+
+        # Sort by modifiedTime descending to pick the most recent
+        pptx_files.sort(
+            key=lambda f: f.get("modifiedTime", ""), reverse=True,
+        )
+        latest = pptx_files[0]
+        logger.info(
+            "Found %d PPTX file(s) in client folder; using '%s' (modified %s)",
+            len(pptx_files), latest["name"], latest.get("modifiedTime", "?"),
+        )
+
+        dest_path = dest_dir / f"{client_slug}_reference.pptx"
+        return self._download_file(latest["id"], dest_path)
+
+    def find_client_pptx_files(
+        self,
+        client_folder_id: str,
+        client_slug: str,
+        dest_dir: Path | str = "assets/tmp",
+        count: int = 2,
+    ) -> list[dict]:
+        """Download the *count* most recent PPTX files from a client folder.
+
+        Searches only the top-level client folder (Archive is excluded).
+
+        Parameters
+        ----------
+        client_folder_id : str
+            Google Drive folder ID for the client.
+        client_slug : str
+            Client identifier used for local filenames.
+        dest_dir : Path | str
+            Directory to download files into.
+        count : int
+            Maximum number of files to download (default: 2).
+
+        Returns
+        -------
+        list[dict]
+            List of dicts with keys ``local_path``, ``name``, ``modified_time``,
+            sorted most-recent-first.
+        """
+        dest_dir = Path(dest_dir)
+
+        # Collect PPTX from top-level client folder only (no Archive)
+        pptx_files: list[dict] = self._list_files_by_ext(
+            client_folder_id, {".pptx"},
+        )
+
+        if not pptx_files:
+            logger.warning(
+                "No PPTX files found in client folder %s", client_folder_id,
+            )
+            return []
+
+        # Sort by modifiedTime descending (most recent first)
+        pptx_files.sort(
+            key=lambda f: f.get("modifiedTime", ""), reverse=True,
+        )
+
+        # Take the most recent `count` files — these are previous reports
+        # (the report being generated now has NOT been uploaded to Drive yet).
+        previous = pptx_files[:count]
+
+        results = []
+        for i, entry in enumerate(previous):
+            dest_path = dest_dir / f"{client_slug}_prev_{i}.pptx"
+            try:
+                local = self._download_file(entry["id"], dest_path)
+                results.append({
+                    "local_path": local,
+                    "name": entry["name"],
+                    "modified_time": entry.get("modifiedTime"),
+                })
+            except Exception as exc:
+                logger.warning(
+                    "Failed to download previous PPTX '%s': %s",
+                    entry["name"], exc,
+                )
+
+        logger.info(
+            "Downloaded %d previous PPTX file(s) for '%s' (from %d candidates)",
+            len(results), client_slug, len(pptx_files),
+        )
+        return results
+
     def find_latest_ndr_folder(self, client_folder_id: str) -> dict:
         """Find the most recent NDR-* subfolder by date.
 
@@ -1508,6 +1622,9 @@ def place_ndr_images(pptx_path: Path, assets: list[NDRAsset]) -> int:
     correct slides, replacing the dashed-border placeholder shapes.
 
     Uses the same contain-fit algorithm as the main report generator.
+    When a matching placeholder shape is found, its actual position and
+    size are used as the bounding box; otherwise falls back to
+    ``NDR_BOX_INCHES``.
 
     Returns the number of images successfully placed.
     """
@@ -1517,7 +1634,7 @@ def place_ndr_images(pptx_path: Path, assets: list[NDRAsset]) -> int:
     from pptx.util import Inches
 
     prs = PptxPresentation(str(pptx_path))
-    box = Rect(
+    default_box = Rect(
         x=int(Inches(NDR_BOX_INCHES["left"])),
         y=int(Inches(NDR_BOX_INCHES["top"])),
         width=int(Inches(NDR_BOX_INCHES["width"])),
@@ -1536,9 +1653,16 @@ def place_ndr_images(pptx_path: Path, assets: list[NDRAsset]) -> int:
 
         slide = prs.slides[asset.slide_index]
 
-        # Remove the dashed placeholder shape (by name)
+        # Find the placeholder shape and read its position before removing it
+        box = default_box
         for shape in list(slide.shapes):
             if shape.name == asset.shape_name:
+                box = Rect(
+                    x=int(shape.left),
+                    y=int(shape.top),
+                    width=int(shape.width),
+                    height=int(shape.height),
+                )
                 sp = shape._element
                 sp.getparent().remove(sp)
                 break

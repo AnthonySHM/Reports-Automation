@@ -686,8 +686,8 @@ def slide_required_patches(prs):
     _content_panel(slide)
 
     text_padding = 0.25
-    box = _tb(slide, CONTENT_L + text_padding, BODY_TOP + 0.25, 
-              CONTENT_W - (2 * text_padding), 2.0, "",
+    box = _tb(slide, CONTENT_L + text_padding, BODY_TOP + 0.12,
+              CONTENT_W - (2 * text_padding), 0.75, "",
               sz=13, clr=CLR_DARK, name="required_patches_body")
     tf = box.text_frame
 
@@ -708,6 +708,18 @@ def slide_required_patches(prs):
         p.font.name = "Calibri"
         p.space_before = Pt(8)
         p.space_after = Pt(6)
+
+    # Chart placeholder centered in the remaining content area
+    # Text ends at ~BODY_TOP + 0.87, content panel ends at BODY_TOP + BODY_H
+    # Center the chart vertically between text bottom and panel bottom
+    chart_h = 2.2
+    text_bottom = BODY_TOP + 0.87
+    available = (BODY_TOP + BODY_H) - text_bottom
+    chart_top = text_bottom + (available - chart_h) / 2
+    _placeholder_area(slide, CONTENT_L + 0.25, chart_top,
+                      CONTENT_W - 0.5, chart_h,
+                      "[Patch trend chart placeholder]",
+                      name="required_patches_chart")
 
     _add_footer(slide, "14")
 
@@ -989,8 +1001,8 @@ def build_multi_sensor_template(sensor_ids: list[str]) -> Path:
     _add_header(slide, "Required Software Patches")
     _content_panel(slide)
     text_padding = 0.25
-    box = _tb(slide, CONTENT_L + text_padding, BODY_TOP + 0.25,
-              CONTENT_W - (2 * text_padding), 2.0, "",
+    box = _tb(slide, CONTENT_L + text_padding, BODY_TOP + 0.12,
+              CONTENT_W - (2 * text_padding), 0.75, "",
               sz=13, clr=CLR_DARK, name="required_patches_body")
     tf = box.text_frame
     for i, text in enumerate([
@@ -1010,6 +1022,15 @@ def build_multi_sensor_template(sensor_ids: list[str]) -> Path:
         p.font.name = "Calibri"
         p.space_before = Pt(8)
         p.space_after = Pt(6)
+    # Chart placeholder centered in the remaining content area
+    chart_h = 2.2
+    text_bottom = BODY_TOP + 0.87
+    available = (BODY_TOP + BODY_H) - text_bottom
+    chart_top = text_bottom + (available - chart_h) / 2
+    _placeholder_area(slide, CONTENT_L + 0.25, chart_top,
+                      CONTENT_W - 0.5, chart_h,
+                      "[Patch trend chart placeholder]",
+                      name="required_patches_chart")
     _add_footer(slide, str(slide_num))
     slide_num += 1
 

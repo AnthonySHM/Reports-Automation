@@ -154,26 +154,3 @@ def generate_simple_insight(
             "updates identified during the reporting period."
         )
 
-
-# For testing
-if __name__ == "__main__":
-    # Test various scenarios
-    scenarios = [
-        {"name": "High patches", "ms": 12, "sw": 8, "det": 150, "soc": 15, "inv": 25, "vuln": 12},
-        {"name": "Moderate", "ms": 6, "sw": 3, "det": 75, "soc": 8, "inv": 10, "vuln": 5},
-        {"name": "Low patches", "ms": 2, "sw": 1, "det": 30, "soc": 3, "inv": 5, "vuln": 2},
-        {"name": "Excellent", "ms": 0, "sw": 0, "det": 20, "soc": 2, "inv": 3, "vuln": 0},
-    ]
-    
-    for scenario in scenarios:
-        print(f"\n{scenario['name']} scenario:")
-        print(f"  Patches: MS={scenario['ms']}, SW={scenario['sw']}")
-        insight = generate_cyber_insight(
-            microsoft_kb_count=scenario['ms'],
-            software_count=scenario['sw'],
-            key_detections=scenario['det'],
-            soc_tickets=scenario['soc'],
-            analyst_investigations=scenario['inv'],
-            nuclei_vulns_count=scenario['vuln'],
-        )
-        print(f"  Insight: {insight}")

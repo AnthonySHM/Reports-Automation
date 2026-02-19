@@ -76,12 +76,12 @@ def generate_patch_trend_chart(
         tick_font = ImageFont.load_default()
         legend_font = ImageFont.load_default()
     
-    # Chart margins (increased for better spacing)
-    margin_top = 120
-    margin_bottom = 150
-    margin_left = 140
+    # Chart margins — generous enough so labels never overlap data
+    margin_top = 100
+    margin_bottom = 175
+    margin_left = 160
     margin_right = 100
-    
+
     # Plot area
     plot_left = margin_left
     plot_right = width - margin_right
@@ -89,41 +89,58 @@ def generate_patch_trend_chart(
     plot_bottom = height - margin_bottom
     plot_width = plot_right - plot_left
     plot_height = plot_bottom - plot_top
-    
-    # Title
+
+    # Title (centered above plot)
     title = "Missing Patch Quantity"
     title_bbox = draw.textbbox((0, 0), title, font=title_font)
     title_width = title_bbox[2] - title_bbox[0]
     title_x = (width - title_width) // 2
-    draw.text((title_x, 25), title, fill=CHART_COLORS['text'], font=title_font)
-    
+    draw.text((title_x, 20), title, fill=CHART_COLORS['text'], font=title_font)
+
     # Determine Y-axis range
     max_val = max(max(microsoft_counts), max(software_counts))
     y_max = ((max_val + 1) // 2 + 1) * 2  # Round up to next even number
     y_ticks = list(range(0, y_max + 1, 2))
-    
-    # Draw Y-axis gridlines and labels
+
+    # Draw Y-axis gridlines and tick labels (right-aligned before the axis)
     for y_val in y_ticks:
         y_pos = plot_bottom - (y_val / y_max) * plot_height
-        
+
         # Gridline
         draw.line(
             [(plot_left, y_pos), (plot_right, y_pos)],
-            fill=CHART_COLORS['grid'], width=2
+            fill=CHART_COLORS['grid'], width=2,
         )
-        
-        # Y-axis tick label (adjusted positioning for better spacing)
+
+        # Y-axis tick label — right-aligned to sit just left of the axis
         label = str(y_val)
-        label_bbox = draw.textbbox((0, 0), label, font=tick_font)
-        label_height = label_bbox[3] - label_bbox[1]
-        draw.text((margin_left - 80, y_pos - label_height // 2), label, fill=CHART_COLORS['text'], font=tick_font)
-    
+        lbl_bbox = draw.textbbox((0, 0), label, font=tick_font)
+        lbl_w = lbl_bbox[2] - lbl_bbox[0]
+        lbl_h = lbl_bbox[3] - lbl_bbox[1]
+        draw.text(
+            (plot_left - 15 - lbl_w, y_pos - lbl_h // 2),
+            label, fill=CHART_COLORS['text'], font=tick_font,
+        )
+
     # Draw axes
-    draw.line([(plot_left, plot_top), (plot_left, plot_bottom)], 
+    draw.line([(plot_left, plot_top), (plot_left, plot_bottom)],
               fill=CHART_COLORS['axis'], width=3)
-    draw.line([(plot_left, plot_bottom), (plot_right, plot_bottom)], 
+    draw.line([(plot_left, plot_bottom), (plot_right, plot_bottom)],
               fill=CHART_COLORS['axis'], width=3)
-    
+
+    # Y-axis label — rotated 90° so it never overlaps tick numbers
+    y_label = "# of Patches"
+    y_lbl_bbox = draw.textbbox((0, 0), y_label, font=label_font)
+    y_lbl_w = y_lbl_bbox[2] - y_lbl_bbox[0]
+    y_lbl_h = y_lbl_bbox[3] - y_lbl_bbox[1]
+    txt_img = Image.new('RGBA', (y_lbl_w + 4, y_lbl_h + 4), (255, 255, 255, 0))
+    ImageDraw.Draw(txt_img).text((0, 0), y_label,
+                                  fill=CHART_COLORS['text'], font=label_font)
+    txt_img = txt_img.rotate(90, expand=True)
+    paste_x = 12
+    paste_y = plot_top + (plot_height - txt_img.height) // 2
+    img.paste(txt_img, (paste_x, paste_y), txt_img)
+
     # Calculate X positions
     n_points = len(dates)
     if n_points > 1:
@@ -131,109 +148,93 @@ def generate_patch_trend_chart(
         x_positions = [plot_left + i * x_step for i in range(n_points)]
     else:
         x_positions = [plot_left + plot_width / 2]
-    
-    # Helper function to convert data value to Y pixel position
+
+    # Helper: data value → Y pixel
     def data_to_y(value):
         return plot_bottom - (value / y_max) * plot_height
-    
-    # Draw lines
-    # Microsoft KB patches (red)
-    ms_points = [(x_positions[i], data_to_y(microsoft_counts[i])) 
+
+    # Draw lines — Microsoft KB patches (red)
+    ms_points = [(x_positions[i], data_to_y(microsoft_counts[i]))
                  for i in range(n_points)]
     for i in range(len(ms_points) - 1):
-        draw.line([ms_points[i], ms_points[i + 1]], 
+        draw.line([ms_points[i], ms_points[i + 1]],
                   fill=CHART_COLORS['microsoft'], width=5)
-    
-    # 3rd Party Software patches (green)
-    sw_points = [(x_positions[i], data_to_y(software_counts[i])) 
+
+    # Draw lines — 3rd Party Software patches (green)
+    sw_points = [(x_positions[i], data_to_y(software_counts[i]))
                  for i in range(n_points)]
     for i in range(len(sw_points) - 1):
-        draw.line([sw_points[i], sw_points[i + 1]], 
+        draw.line([sw_points[i], sw_points[i + 1]],
                   fill=CHART_COLORS['software'], width=5)
-    
+
     # Draw markers
     marker_radius = 12
     for i in range(n_points):
-        # Microsoft marker
         x, y = ms_points[i]
         draw.ellipse(
-            [(x - marker_radius, y - marker_radius), 
+            [(x - marker_radius, y - marker_radius),
              (x + marker_radius, y + marker_radius)],
-            fill=CHART_COLORS['microsoft']
+            fill=CHART_COLORS['microsoft'],
         )
-        
-        # Software marker
         x, y = sw_points[i]
         draw.ellipse(
-            [(x - marker_radius, y - marker_radius), 
+            [(x - marker_radius, y - marker_radius),
              (x + marker_radius, y + marker_radius)],
-            fill=CHART_COLORS['software']
+            fill=CHART_COLORS['software'],
         )
-    
-    # X-axis labels (dates) - improved spacing
+
+    # --- Bottom labels — spaced vertically so nothing overlaps ---
+
+    # Row 1: X-axis date tick labels (just below the axis)
+    date_labels_y = plot_bottom + 15
     for i, date in enumerate(dates):
-        date_bbox = draw.textbbox((0, 0), date, font=tick_font)
-        date_width = date_bbox[2] - date_bbox[0]
+        d_bbox = draw.textbbox((0, 0), date, font=tick_font)
+        d_w = d_bbox[2] - d_bbox[0]
         x_center = x_positions[i]
-        draw.text((x_center - date_width // 2, plot_bottom + 25), 
+        draw.text((x_center - d_w // 2, date_labels_y),
                   date, fill=CHART_COLORS['text'], font=tick_font)
-    
-    # Axis labels
-    # Y-axis label (vertically aligned, better positioning)
-    y_label = "# of Patches"
-    y_label_bbox = draw.textbbox((0, 0), y_label, font=label_font)
-    y_label_height = y_label_bbox[3] - y_label_bbox[1]
-    draw.text((15, plot_top + plot_height // 2 - y_label_height // 2), y_label, 
-              fill=CHART_COLORS['text'], font=label_font)
-    
-    # X-axis label (improved spacing)
+
+    # Row 2: "Date" axis label (below the tick labels)
     x_label = "Date"
-    x_label_bbox = draw.textbbox((0, 0), x_label, font=label_font)
-    x_label_width = x_label_bbox[2] - x_label_bbox[0]
-    draw.text((plot_left + plot_width // 2 - x_label_width // 2, height - 85), 
+    xl_bbox = draw.textbbox((0, 0), x_label, font=label_font)
+    xl_w = xl_bbox[2] - xl_bbox[0]
+    x_label_y = date_labels_y + 40
+    draw.text((plot_left + plot_width // 2 - xl_w // 2, x_label_y),
               x_label, fill=CHART_COLORS['text'], font=label_font)
-    
-    # Legend (improved spacing and positioning)
-    legend_y = height - 50
+
+    # Row 3: Legend (at the very bottom, well below "Date")
+    legend_y = x_label_y + 48
     marker_size = 18
-    
-    # Calculate total legend width to center it properly
+
     ms_legend_text = "Microsoft KB Patches"
     sw_legend_text = "3rd Party Software Patches"
-    
-    ms_text_bbox = draw.textbbox((0, 0), ms_legend_text, font=legend_font)
-    ms_text_width = ms_text_bbox[2] - ms_text_bbox[0]
-    
-    sw_text_bbox = draw.textbbox((0, 0), sw_legend_text, font=legend_font)
-    sw_text_width = sw_text_bbox[2] - sw_text_bbox[0]
-    
-    # Spacing between legend items
+
+    ms_tw = draw.textbbox((0, 0), ms_legend_text, font=legend_font)[2]
+    sw_tw = draw.textbbox((0, 0), sw_legend_text, font=legend_font)[2]
     legend_spacing = 60
-    
-    # Total width of both legend items
-    total_legend_width = marker_size + 15 + ms_text_width + legend_spacing + marker_size + 15 + sw_text_width
-    
-    # Start position to center the legend
-    legend_start_x = (width - total_legend_width) // 2
-    
-    # Microsoft KB Patches legend
-    ms_legend_x = legend_start_x
+    total_legend_w = (marker_size + 10 + ms_tw
+                      + legend_spacing
+                      + marker_size + 10 + sw_tw)
+    legend_start_x = (width - total_legend_w) // 2
+
+    # Microsoft legend item
+    ms_lx = legend_start_x
     draw.ellipse(
-        [(ms_legend_x, legend_y - marker_size // 2), 
-         (ms_legend_x + marker_size, legend_y + marker_size // 2)],
-        fill=CHART_COLORS['microsoft']
+        [(ms_lx, legend_y - marker_size // 2),
+         (ms_lx + marker_size, legend_y + marker_size // 2)],
+        fill=CHART_COLORS['microsoft'],
     )
-    draw.text((ms_legend_x + marker_size + 10, legend_y - 12), 
+    draw.text((ms_lx + marker_size + 10, legend_y - 12),
               ms_legend_text, fill=CHART_COLORS['text'], font=legend_font)
-    
-    # 3rd Party Software legend
-    sw_legend_x = ms_legend_x + marker_size + 15 + ms_text_width + legend_spacing
+
+    # Software legend item
+    sw_lx = ms_lx + marker_size + 10 + ms_tw + legend_spacing
     draw.ellipse(
-        [(sw_legend_x, legend_y - marker_size // 2), 
-         (sw_legend_x + marker_size, legend_y + marker_size // 2)],
-        fill=CHART_COLORS['software']
+        [(sw_lx, legend_y - marker_size // 2),
+         (sw_lx + marker_size, legend_y + marker_size // 2)],
+        fill=CHART_COLORS['software'],
     )
-    draw.text((sw_legend_x + marker_size + 10, legend_y - 12), 
+    draw.text((sw_lx + marker_size + 10, legend_y - 12),
               sw_legend_text, fill=CHART_COLORS['text'], font=legend_font)
     
     # Save image
@@ -247,25 +248,87 @@ def generate_patch_trend_chart(
     return output_path
 
 
-def generate_sample_patch_chart(output_path: str | Path) -> Path:
-    """Generate a sample patch trend chart with placeholder data.
-    
-    This is useful for template generation and testing.
+def find_chart_slide_index(pptx_path: str | Path) -> tuple[int, object] | None:
+    """Find the first slide containing an embedded chart in a PPTX file.
+
+    Parameters
+    ----------
+    pptx_path : str | Path
+        Path to the PPTX file to inspect.
+
+    Returns
+    -------
+    tuple[int, object] | None
+        ``(slide_index, chart_shape)`` for the first chart found, or ``None``
+        if no charts exist in the presentation.
     """
-    dates = ["November 10", "December 8", "January 5"]
-    microsoft_counts = [6, 5, 4]
-    software_counts = [3, 3, 2]
-    
-    return generate_patch_trend_chart(
-        dates=dates,
-        microsoft_counts=microsoft_counts,
-        software_counts=software_counts,
-        output_path=output_path,
+    from pptx import Presentation as PptxPresentation
+
+    prs = PptxPresentation(str(pptx_path))
+    for idx, slide in enumerate(prs.slides):
+        for shape in slide.shapes:
+            if shape.has_chart:
+                logger.info(
+                    "Found chart on slide %d (shape '%s', chart type: %s)",
+                    idx, shape.name, shape.chart.chart_type,
+                )
+                return idx, shape
+    logger.info("No embedded charts found in %s", pptx_path)
+    return None
+
+
+def update_chart_in_pptx(
+    pptx_path: str | Path,
+    slide_index: int,
+    chart_shape_name: str,
+    dates: list[str],
+    microsoft_counts: list[int],
+    software_counts: list[int],
+) -> None:
+    """Update chart data in a PPTX while preserving its visual style.
+
+    Parameters
+    ----------
+    pptx_path : str | Path
+        Path to the PPTX file containing the chart.
+    slide_index : int
+        0-based index of the slide containing the chart.
+    chart_shape_name : str
+        Name of the chart shape to update.
+    dates : list[str]
+        Category labels (formatted date strings).
+    microsoft_counts : list[int]
+        Microsoft KB patch counts per date.
+    software_counts : list[int]
+        3rd-party software patch counts per date.
+    """
+    from pptx import Presentation as PptxPresentation
+    from pptx.chart.data import CategoryChartData
+
+    prs = PptxPresentation(str(pptx_path))
+    slide = prs.slides[slide_index]
+
+    chart_shape = None
+    for shape in slide.shapes:
+        if shape.name == chart_shape_name and shape.has_chart:
+            chart_shape = shape
+            break
+
+    if chart_shape is None:
+        logger.warning(
+            "Chart shape '%s' not found on slide %d of %s",
+            chart_shape_name, slide_index, pptx_path,
+        )
+        return
+
+    chart_data = CategoryChartData()
+    chart_data.categories = dates
+    chart_data.add_series("Microsoft KB", microsoft_counts)
+    chart_data.add_series("Software Packages", software_counts)
+
+    chart_shape.chart.replace_data(chart_data)
+    prs.save(str(pptx_path))
+    logger.info(
+        "Updated chart '%s' on slide %d with %d data points",
+        chart_shape_name, slide_index, len(dates),
     )
-
-
-if __name__ == "__main__":
-    # Test the chart generator
-    output = Path("output/sample_patch_trend.png")
-    generate_sample_patch_chart(output)
-    print(f"Sample chart saved to: {output}")
