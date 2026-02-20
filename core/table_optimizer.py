@@ -112,7 +112,9 @@ class _CSVData:
     rows: list[list[str]]
     col_max_len: list[int]
     col_avg_len: list[float]
-    title: str | None = None    # metadata title (e.g. "Beaconing Score")
+    title: str | None = None        # metadata title (e.g. "Beaconing Score")
+    date: str | None = None          # date stamp (e.g. "2026-01-04")
+    sensor_name: str | None = None   # sensor identifier (e.g. "VAPRD")
 
 
 def _read_csv(path: Path) -> _CSVData | None:
@@ -127,12 +129,20 @@ def _read_csv(path: Path) -> _CSVData | None:
     if not raw:
         return None
 
-    # Extract title from metadata first row (empty first cell)
+    # Extract title, date, and sensor from metadata first row (empty first cell)
+    # Metadata row format: [empty, sensor_id, date, title]
     title: str | None = None
+    date: str | None = None
+    sensor_name: str | None = None
     if len(raw) >= 2 and raw[0][0].strip() == "":
         meta = raw[0]
         # Title is the last non-empty cell in the metadata row
         title = next((c.strip() for c in reversed(meta) if c.strip()), None)
+        # Sensor name is cell index 1, date is cell index 2
+        if len(meta) > 1 and meta[1].strip():
+            sensor_name = meta[1].strip()
+        if len(meta) > 2 and meta[2].strip():
+            date = meta[2].strip()
         raw = raw[1:]
     if not raw:
         return None
@@ -162,6 +172,8 @@ def _read_csv(path: Path) -> _CSVData | None:
         col_max_len=col_max,
         col_avg_len=[s / denom for s in col_sum],
         title=title,
+        date=date,
+        sensor_name=sensor_name,
     )
 
 
@@ -252,8 +264,19 @@ def _render_table_image(data: _CSVData, width_px: int, height_px: int) -> Image.
     - Table is centred horizontally; transparent background lets the
       grey slide panel show through.
     """
-    has_title = bool(data.title)
     n_data = len(data.rows)
+
+    # Build combined title row: "Title  |  Sensor  |  Date"
+    title_parts = []
+    if data.title:
+        title_parts.append(data.title)
+    if data.sensor_name:
+        title_parts.append(data.sensor_name)
+    if data.date:
+        title_parts.append(data.date)
+    combined_title = "  |  ".join(title_parts) if title_parts else None
+    has_title = bool(combined_title)
+
     # Total visible rows: optional title + header + data (min 1 for "No data")
     n_total = (1 if has_title else 0) + 1 + max(n_data, 1)
 
@@ -326,9 +349,9 @@ def _render_table_image(data: _CSVData, width_px: int, height_px: int) -> Image.
     y = 0
     ri_offset = 0  # index into row_heights
 
-    # Title row (metadata)
+    # Title row (title | sensor | date)
     if has_title:
-        _draw_title_row(y, row_heights[ri_offset], data.title)
+        _draw_title_row(y, row_heights[ri_offset], combined_title)
         y += row_heights[ri_offset]
         ri_offset += 1
 
@@ -418,6 +441,7 @@ def optimize_tables(
     *,
     skip_indices: set[int] | None = None,
     ndr_slide_indices: set[int] | None = None,
+    report_date: str | None = None,
 ) -> int:
     """Convert tables to images in a PPTX at grey-panel dimensions.
 
@@ -466,9 +490,13 @@ def optimize_tables(
             )
             continue
 
-        # Append sensor name to title row
-        if asset.sensor_id and asset.sensor_id != "DEFAULT" and data.title:
-            data.title = f"{data.title} - {asset.sensor_id}"
+        # Set sensor name from asset if not already extracted from CSV metadata
+        if asset.sensor_id and asset.sensor_id != "DEFAULT":
+            if not data.sensor_name:
+                data.sensor_name = asset.sensor_id
+        # Set date from report_date if not already extracted from CSV metadata
+        if not data.date and report_date:
+            data.date = report_date
 
         # 2. Slide-specific constraints (computed from *original* index so
         #    continuation slides inherit the correct area)
@@ -517,6 +545,8 @@ def optimize_tables(
                 col_max_len=data.col_max_len,
                 col_avg_len=data.col_avg_len,
                 title=data.title,
+                date=data.date,
+                sensor_name=data.sensor_name,
             )
             if _render_and_place(slide, page1_data, area, asset.shape_name):
                 count += 1
@@ -546,6 +576,8 @@ def optimize_tables(
                     col_max_len=data.col_max_len,
                     col_avg_len=data.col_avg_len,
                     title=data.title,
+                    date=data.date,
+                    sensor_name=data.sensor_name,
                 )
                 if _render_and_place(cont_slide, page_data, area, asset.shape_name):
                     count += 1

@@ -43,6 +43,7 @@ from core.drive_agent import (
     count_siem_installations, count_dfir_installations, count_xdr_installations,
     build_software_patches_csv, build_ms_patches_csv, replace_kb_count_in_slides,
     replace_ai_insight_in_slide, replace_endpoint_count_in_slide,
+    copy_service_coverage_from_reference,
 )
 from core.patch_history import generate_patch_trend_chart_for_report
 from core.table_optimizer import optimize_tables, cleanup_placeholder_tables
@@ -547,6 +548,7 @@ def generate_report():
         kb_warning = None
         software_patches_asset: CSVTableAsset | None = None
         ms_patches_asset: CSVTableAsset | None = None
+        patch_chart_asset: NDRAsset | None = None
 
         if _drive_agent:
             try:
@@ -600,7 +602,6 @@ def generate_report():
                     kb_count_populated = replacements > 0
 
                 # Generate patch trend chart image
-                patch_chart_asset: NDRAsset | None = None
                 try:
                     chart_ms = kb_count if kb_count is not None else 0
                     chart_sw = sw_count if sw_count is not None else 0
@@ -650,6 +651,32 @@ def generate_report():
                 except Exception as exc:
                     logger.warning("Failed to generate AI insight: %s", exc)
                 
+                # Copy service coverage slide content from reference PPTX
+                try:
+                    ref_pptx = _drive_agent.fetch_reference_pptx(client_name)
+                    if ref_pptx:
+                        copied = copy_service_coverage_from_reference(
+                            result_path, ref_pptx,
+                        )
+                        if copied:
+                            logger.info(
+                                "Service coverage copied from reference PPTX: %s",
+                                ref_pptx,
+                            )
+                        else:
+                            logger.warning(
+                                "Could not copy service coverage from reference PPTX"
+                            )
+                    else:
+                        logger.info(
+                            "No reference PPTX found for '%s'; using template content",
+                            client_name,
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to copy service coverage from reference: %s", exc,
+                    )
+
                 # Fetch inventory report and populate endpoint count on slide 4
                 try:
                     inventory_csv = _drive_agent.fetch_inventory_csv(
@@ -873,6 +900,7 @@ def generate_report():
                             idx for indices in sensor_slide_map.values()
                             for idx in indices
                         ),
+                        report_date=end_date,
                     )
 
                     logger.info(
@@ -1045,6 +1073,7 @@ def generate_report():
                     )
                     tables_optimized = optimize_tables(
                         result_path, csv_assets,
+                        report_date=end_date,
                     )
                     logger.info(
                         "Populated %d CSV tables (%d optimised) for '%s'",

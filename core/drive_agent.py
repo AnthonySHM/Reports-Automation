@@ -22,6 +22,7 @@ to the ``DriveAgent`` constructor.
 
 from __future__ import annotations
 
+import copy
 import csv
 import io
 import logging
@@ -563,6 +564,29 @@ class DriveAgent:
         )
         return results
 
+    def fetch_reference_pptx(
+        self, client_slug: str, dest_dir: Path | str = "assets/tmp",
+    ) -> Path | None:
+        """Download the most recent PPTX from the client's Drive folder.
+
+        Convenience wrapper around :meth:`find_client_folder` +
+        :meth:`find_client_pptx`.
+
+        Returns
+        -------
+        Path | None
+            Local path to the downloaded reference PPTX, or ``None`` if the
+            client folder or PPTX could not be found.
+        """
+        try:
+            folder = self.find_client_folder(client_slug)
+        except ClientFolderNotFound:
+            logger.warning(
+                "fetch_reference_pptx: no Drive folder for '%s'", client_slug,
+            )
+            return None
+        return self.find_client_pptx(folder["id"], client_slug, dest_dir)
+
     def find_latest_ndr_folder(self, client_folder_id: str) -> dict:
         """Find the most recent NDR-* subfolder by date.
 
@@ -764,8 +788,19 @@ class DriveAgent:
             )
             return ["DEFAULT"]
 
-        # Build search terms for the client slug
-        search_terms = CLIENT_FOLDER_MAP.get(client_slug.lower(), [client_slug.lower()])
+        # Build search terms for the client slug (resolve display names to slugs first)
+        raw = client_slug.strip()
+        normalized = raw.lower()
+        slug = DISPLAY_NAME_TO_SLUG.get(normalized)
+        if slug is None:
+            for display_name, s in DISPLAY_NAME_TO_SLUG.items():
+                if display_name in normalized or normalized in display_name:
+                    slug = s
+                    break
+        if slug is not None:
+            search_terms = CLIENT_FOLDER_MAP.get(slug, [slug])
+        else:
+            search_terms = CLIENT_FOLDER_MAP.get(normalized, [normalized, raw])
 
         # Extract sensor IDs from folder names.
         # Pattern: NDR-<client_term>-<SENSOR_ID>-<date_part>
@@ -822,6 +857,46 @@ class DriveAgent:
             # Valid sensor IDs are alphanumeric, at least 2 chars, not purely numeric
             if re.match(r"^[A-Za-z0-9]{2,}$", candidate) and not candidate.isdigit():
                 sensors.add(candidate.upper())
+
+        # Fallback: group NDR folders by non-date base signature and derive
+        # sensor IDs from the distinguishing segments when the main loop missed them.
+        def _base_sig(name: str) -> str:
+            parts = [p.strip() for p in name.split("-") if p.strip()]
+            return "-".join(
+                p.lower() for p in parts
+                if not re.match(r"^\d{1,4}$", p)
+                and not re.match(r"^[A-Za-z]{3}\d{2,4}$", p)
+            )
+
+        base_groups: dict[str, list] = {}
+        for folder in ndr_folders:
+            sig = _base_sig(folder["name"])
+            base_groups.setdefault(sig, []).append(folder)
+
+        if len(base_groups) >= 2 and len(sensors) < len(base_groups):
+            # Find common segments shared by ALL groups
+            all_sigs = list(base_groups.keys())
+            common_parts = set(all_sigs[0].split("-"))
+            for sig in all_sigs[1:]:
+                common_parts &= set(sig.split("-"))
+
+            for sig in all_sigs:
+                unique = [
+                    p for p in sig.split("-")
+                    if p not in common_parts
+                    and re.match(r"^[A-Za-z0-9]{2,}$", p)
+                    and not p.isdigit()
+                ]
+                if unique:
+                    candidate = unique[0].upper()
+                    if candidate not in sensors:
+                        sensors.add(candidate)
+
+            if len(sensors) >= 2:
+                logger.info(
+                    "detect_sensors fallback: derived %d sensor(s) from folder grouping: %s",
+                    len(sensors), sorted(sensors),
+                )
 
         if not sensors:
             logger.info(
@@ -2579,6 +2654,144 @@ def replace_endpoint_count_in_slide(
         logger.info("Service coverage counts saved to %s (%d replacements)", pptx_path, replacements)
     
     return replacements
+
+
+# ---------------------------------------------------------------------------
+# Copy service coverage slide content from a reference PPTX
+# ---------------------------------------------------------------------------
+_COUNT_PATTERNS = [
+    # "123 systems detected" / "123 system detected"
+    (re.compile(r"(\d+)(\s+systems?\s+detected)", re.IGNORECASE), r"[Count]\2"),
+    # "123 agents" / "123 agent"
+    (re.compile(r"(\d+)(\s+agents?)", re.IGNORECASE), r"[Count]\2"),
+    # "123 systems reporting" / "123 system reporting"
+    (re.compile(r"(\d+)(\s+systems?\s+reporting)", re.IGNORECASE), r"[Count]\2"),
+    # "accounts: 123" / "account: 123"
+    (re.compile(r"(accounts?:\s*)\d+", re.IGNORECASE), r"\1[Count]"),
+]
+
+
+def _replace_counts_with_placeholder(text: str) -> str:
+    """Replace numeric count values in *text* with ``[Count]`` placeholders."""
+    for pattern, replacement in _COUNT_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def copy_service_coverage_from_reference(
+    target_pptx_path: Path,
+    reference_pptx_path: Path,
+) -> bool:
+    """Copy the service coverage text frame from *reference_pptx_path* into
+    the target PPTX, preserving all paragraph formatting.
+
+    Numeric count values in the copied text are replaced with ``[Count]``
+    placeholders so that ``replace_endpoint_count_in_slide`` can fill them
+    with fresh inventory data afterwards.
+
+    Parameters
+    ----------
+    target_pptx_path : Path
+        Path to the report PPTX being generated (modified in-place).
+    reference_pptx_path : Path
+        Path to the most recent client PPTX downloaded from Drive.
+
+    Returns
+    -------
+    bool
+        ``True`` if the copy succeeded, ``False`` otherwise.
+    """
+    SHAPE_NAME = "service_coverage_body"
+    FALLBACK_KEYWORD = "Endpoint Deployment"
+
+    # --- Open reference and locate the source text frame -----------------
+    ref_prs = PptxPresentation(str(reference_pptx_path))
+    ref_txBody = None
+
+    # First try: shape named service_coverage_body
+    for slide in ref_prs.slides:
+        for shape in slide.shapes:
+            if shape.name == SHAPE_NAME and shape.has_text_frame:
+                ref_txBody = shape.text_frame._txBody
+                break
+        if ref_txBody is not None:
+            break
+
+    # Fallback: any text frame containing the keyword
+    if ref_txBody is None:
+        for slide in ref_prs.slides:
+            for shape in slide.shapes:
+                if not shape.has_text_frame:
+                    continue
+                frame_text = shape.text_frame.text
+                if FALLBACK_KEYWORD in frame_text:
+                    ref_txBody = shape.text_frame._txBody
+                    logger.info(
+                        "Reference: using fallback shape '%s' (contains '%s')",
+                        shape.name, FALLBACK_KEYWORD,
+                    )
+                    break
+            if ref_txBody is not None:
+                break
+
+    if ref_txBody is None:
+        logger.warning(
+            "No service coverage text frame found in reference PPTX: %s",
+            reference_pptx_path,
+        )
+        return False
+
+    # Deep-copy all <a:p> elements from the reference
+    ap_tag = qn("a:p")
+    ref_paragraphs = [
+        copy.deepcopy(p) for p in ref_txBody.findall(ap_tag)
+    ]
+    if not ref_paragraphs:
+        logger.warning("Reference text frame has no paragraphs")
+        return False
+
+    # Replace numeric counts with [Count] placeholders in the copies
+    ar_tag = qn("a:r")
+    at_tag = qn("a:t")
+    for p_elem in ref_paragraphs:
+        for run_elem in p_elem.findall(f".//{ar_tag}"):
+            t_elem = run_elem.find(at_tag)
+            if t_elem is not None and t_elem.text:
+                t_elem.text = _replace_counts_with_placeholder(t_elem.text)
+
+    # --- Open target and locate its text frame ---------------------------
+    tgt_prs = PptxPresentation(str(target_pptx_path))
+    tgt_txBody = None
+
+    for slide in tgt_prs.slides:
+        for shape in slide.shapes:
+            if shape.name == SHAPE_NAME and shape.has_text_frame:
+                tgt_txBody = shape.text_frame._txBody
+                break
+        if tgt_txBody is not None:
+            break
+
+    if tgt_txBody is None:
+        logger.warning(
+            "No '%s' shape found in target PPTX: %s",
+            SHAPE_NAME, target_pptx_path,
+        )
+        return False
+
+    # Remove existing <a:p> paragraphs from the target
+    for old_p in tgt_txBody.findall(ap_tag):
+        tgt_txBody.remove(old_p)
+
+    # Append the reference paragraphs (bodyPr/lstStyle stay untouched)
+    for new_p in ref_paragraphs:
+        tgt_txBody.append(new_p)
+
+    tgt_prs.save(str(target_pptx_path))
+    logger.info(
+        "Copied %d service coverage paragraphs from reference '%s' into '%s'",
+        len(ref_paragraphs), reference_pptx_path, target_pptx_path,
+    )
+    return True
 
 
 # ---------------------------------------------------------------------------
